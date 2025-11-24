@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect, useMemo, useImperativeHandle, forwardRef } from 'react';
+import React, { useRef, useState, useEffect, useMemo, useImperativeHandle, forwardRef, useCallback } from 'react';
 import { Sheet } from '../types';
 import { ArrowUpDown, AlertCircle } from 'lucide-react';
 
@@ -13,7 +13,6 @@ export interface DataGridHandle {
   autoSizeColumns: () => void;
 }
 
-// Estimated row height for virtualization calculation
 const ROW_HEIGHT_BASE = 36; 
 
 const DataGrid = forwardRef<DataGridHandle, DataGridProps>(({ sheet, zoomLevel, compareSheet, onCellEdit }, ref) => {
@@ -21,79 +20,77 @@ const DataGrid = forwardRef<DataGridHandle, DataGridProps>(({ sheet, zoomLevel, 
   const [scrollTop, setScrollTop] = useState(0);
   const [containerHeight, setContainerHeight] = useState(0);
   
-  // Editing State
+  // State
+  const [colWidths, setColWidths] = useState<Record<string, number>>({});
   const [editingCell, setEditingCell] = useState<{ row: number, col: string } | null>(null);
   const [editValue, setEditValue] = useState("");
+  
+  // Selection State: { row: index, colIdx: index of column in sheet.columns }
+  const [selectedCell, setSelectedCell] = useState<{ row: number, colIdx: number } | null>(null);
 
-  // Store base widths (at 100% zoom)
-  const [colWidths, setColWidths] = useState<Record<string, number>>({});
+  // Resizing State
+  const resizingRef = useRef<{ col: string, startX: number, startWidth: number } | null>(null);
+  const [isResizing, setIsResizing] = useState(false);
 
-  // Reset widths when sheet changes
+  // Reset on sheet change
   useEffect(() => {
     const initialWidths: Record<string, number> = {};
-    sheet.columns.forEach(c => initialWidths[c] = 150); // Default width
+    sheet.columns.forEach(c => initialWidths[c] = 150);
     setColWidths(initialWidths);
-    setEditingCell(null); // Clear edit state on sheet change
+    setEditingCell(null);
+    setSelectedCell(null);
+    setScrollTop(0);
   }, [sheet.id, sheet.columns]);
 
-  // Handle Resize for virtualization
+  // Resize observer
   useEffect(() => {
     const handleResize = () => {
       if (containerRef.current) {
         setContainerHeight(containerRef.current.clientHeight);
       }
     };
-    
-    // Initial measure
     handleResize();
-    
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  // Expose autoSize function to parent
+  // Auto Size Logic
+  const performAutoSize = useCallback((specificCol?: string) => {
+    const ctx = document.createElement('canvas').getContext('2d');
+    if (!ctx) return;
+    
+    ctx.font = '14px "Segoe UI", Tahoma, sans-serif'; 
+
+    const newWidths: Record<string, number> = { ...colWidths };
+    const columnsToResize = specificCol ? [specificCol] : sheet.columns;
+
+    columnsToResize.forEach(col => {
+      // Measure header (important!)
+      let maxWidth = ctx.measureText(col).width + 40; // +40 for icon/padding
+
+      // Measure data (sample up to 500 rows)
+      const sampleLimit = Math.min(sheet.data.length, 500);
+      for (let i = 0; i < sampleLimit; i++) {
+        const val = sheet.data[i][col];
+        const txt = val !== null && val !== undefined ? String(val) : '';
+        const w = ctx.measureText(txt).width + 24; // +24 padding
+        if (w > maxWidth) maxWidth = w;
+      }
+
+      newWidths[col] = Math.min(Math.max(maxWidth, 60), 800);
+    });
+    
+    setColWidths(newWidths);
+  }, [sheet, colWidths]);
+
   useImperativeHandle(ref, () => ({
-    autoSizeColumns: () => {
-      const ctx = document.createElement('canvas').getContext('2d');
-      if (!ctx) return;
-      
-      // Approximate font style for measurement
-      ctx.font = '14px "Segoe UI", Tahoma, sans-serif'; 
-
-      const newWidths: Record<string, number> = {};
-
-      sheet.columns.forEach(col => {
-        // Measure header
-        let maxWidth = ctx.measureText(col).width + 40; // +40 for sorting icon and padding
-
-        // Measure data (sample first 200 rows for performance)
-        const sampleLimit = Math.min(sheet.data.length, 200);
-        for (let i = 0; i < sampleLimit; i++) {
-          const val = sheet.data[i][col];
-          const txt = val !== null && val !== undefined ? String(val) : '';
-          const w = ctx.measureText(txt).width + 24; // +24 for padding
-          if (w > maxWidth) maxWidth = w;
-        }
-
-        // Constraints
-        newWidths[col] = Math.min(Math.max(maxWidth, 60), 600);
-      });
-      
-      setColWidths(newWidths);
-    }
+    autoSizeColumns: () => performAutoSize()
   }));
 
-  // Update scroll position for virtualization
-  const onScroll = (e: React.UIEvent<HTMLDivElement>) => {
-    setScrollTop(e.currentTarget.scrollTop);
-  };
-
-  // Virtualization Logic
+  // Virtualization
   const rowHeight = ROW_HEIGHT_BASE * (zoomLevel / 100);
   const totalRows = sheet.data.length;
   const totalHeight = totalRows * rowHeight;
-  
-  // Calculate visible range with buffer
   const buffer = 10;
   const startIndex = Math.max(0, Math.floor(scrollTop / rowHeight) - buffer);
   const endIndex = Math.min(totalRows, Math.ceil((scrollTop + containerHeight) / rowHeight) + buffer);
@@ -105,37 +102,141 @@ const DataGrid = forwardRef<DataGridHandle, DataGridProps>(({ sheet, zoomLevel, 
     }));
   }, [sheet.data, startIndex, endIndex]);
 
-  // Spacer heights to simulate full scroll
   const topSpacerHeight = startIndex * rowHeight;
   const bottomSpacerHeight = (totalRows - endIndex) * rowHeight;
 
-  // Comparison Logic Helpers
-  const getCellClass = (rowIdx: number, colName: string, val: any) => {
-    if (!compareSheet) return '';
-    
-    const compareRow = compareSheet.data[rowIdx];
-    
-    // Case 1: Row doesn't exist in comparison sheet (New Row)
-    if (!compareRow) {
-      return 'bg-green-50 text-green-700';
-    }
-
-    // Case 2: Value differs
-    const compareVal = compareRow[colName];
-    // Loose equality check for string/number differences
-    if (String(val) !== String(compareVal ?? '')) {
-      return 'bg-amber-50 text-amber-800 font-medium';
-    }
-
-    return '';
+  // --- Resizing Logic ---
+  const startResizing = (e: React.MouseEvent, col: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    resizingRef.current = {
+      col,
+      startX: e.clientX,
+      startWidth: colWidths[col] || 150
+    };
+    setIsResizing(true);
+    document.body.style.cursor = 'col-resize';
   };
 
-  const getScaledColWidth = (col: string) => {
-    const base = colWidths[col] || 150;
-    return base * (zoomLevel / 100);
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!resizingRef.current) return;
+      const { col, startX, startWidth } = resizingRef.current;
+      const diff = (e.clientX - startX) * (100 / zoomLevel); // Adjust for zoom
+      const newWidth = Math.max(50, startWidth - diff); // RTL direction: dragging left increases width? No, dragging left decreases in LTR, but RTL...
+      // In RTL, dragging Left (smaller X) should usually increase width if we drag the left border, 
+      // BUT we are dragging the left border of the column (which is visually on the left in RTL).
+      // Actually in standard HTML table RTL, the "resize handle" is usually on the left side of the cell.
+      // Let's assume standard behavior: dragging 'left' (smaller X) makes it wider? 
+      // Let's try standard logic first: Dragging towards the direction of expansion.
+      // In RTL, columns go Right -> Left. 
+      // Handle is on the Left edge of the header.
+      // Dragging Left (decreasing X) -> Increases Width.
+      
+      const adjustedDiff = (startX - e.clientX) * (100 / zoomLevel); // RTL logic
+      const finalWidth = Math.max(50, startWidth + adjustedDiff);
+      
+      setColWidths(prev => ({ ...prev, [col]: finalWidth }));
+    };
+
+    const handleMouseUp = () => {
+      if (resizingRef.current) {
+        resizingRef.current = null;
+        setIsResizing(false);
+        document.body.style.cursor = '';
+      }
+    };
+
+    if (isResizing) {
+      window.addEventListener('mousemove', handleMouseMove);
+      window.addEventListener('mouseup', handleMouseUp);
+    }
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isResizing, zoomLevel]);
+
+  // --- Keyboard Navigation ---
+  const scrollToCell = (row: number) => {
+    // Simple check if row is out of view
+    const rowTop = row * rowHeight;
+    const rowBottom = rowTop + rowHeight;
+    
+    if (containerRef.current) {
+       const viewTop = containerRef.current.scrollTop;
+       const viewBottom = viewTop + containerRef.current.clientHeight;
+       
+       if (rowTop < viewTop) {
+         containerRef.current.scrollTop = rowTop;
+       } else if (rowBottom > viewBottom) {
+         containerRef.current.scrollTop = rowBottom - containerRef.current.clientHeight;
+       }
+    }
   };
 
-  // Editing Handlers
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (editingCell) {
+      if (e.key === 'Enter') saveEdit();
+      if (e.key === 'Escape') setEditingCell(null);
+      return; // Let input handle other keys
+    }
+
+    if (!selectedCell) return;
+
+    const { row, colIdx } = selectedCell;
+    let newRow = row;
+    let newColIdx = colIdx;
+    let handled = true;
+
+    switch (e.key) {
+      case 'ArrowUp':
+        newRow = Math.max(0, row - 1);
+        break;
+      case 'ArrowDown':
+        newRow = Math.min(sheet.data.length - 1, row + 1);
+        break;
+      case 'ArrowRight': // RTL: Right moves Previous
+        newColIdx = Math.max(0, colIdx - 1);
+        break;
+      case 'ArrowLeft': // RTL: Left moves Next
+        newColIdx = Math.min(sheet.columns.length - 1, colIdx + 1);
+        break;
+      case 'Tab':
+        e.preventDefault();
+        if (e.shiftKey) {
+          newColIdx = Math.max(0, colIdx - 1);
+          if (newColIdx === 0 && row > 0) {
+             newRow = row - 1;
+             newColIdx = sheet.columns.length - 1;
+          }
+        } else {
+          newColIdx = Math.min(sheet.columns.length - 1, colIdx + 1);
+          if (newColIdx === sheet.columns.length - 1 && row < sheet.data.length - 1) {
+             // Wrap to next row could be annoying, let's stick to row end
+          }
+        }
+        break;
+      case 'Enter':
+        e.preventDefault();
+        startEditing(row, sheet.columns[colIdx], sheet.data[row][sheet.columns[colIdx]]);
+        return;
+      default:
+        handled = false;
+    }
+
+    if (handled) {
+      e.preventDefault();
+      setSelectedCell({ row: newRow, colIdx: newColIdx });
+      scrollToCell(newRow);
+    }
+  };
+
+  // --- Editing & Selection ---
+  const handleCellClick = (rowIdx: number, colIdx: number) => {
+    setSelectedCell({ row: rowIdx, colIdx });
+  };
+
   const startEditing = (rowIdx: number, col: string, val: any) => {
     setEditingCell({ row: rowIdx, col });
     setEditValue(val !== null && val !== undefined ? String(val) : '');
@@ -145,14 +246,11 @@ const DataGrid = forwardRef<DataGridHandle, DataGridProps>(({ sheet, zoomLevel, 
     if (editingCell) {
       onCellEdit(editingCell.row, editingCell.col, editValue);
       setEditingCell(null);
-    }
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') {
-      saveEdit();
-    } else if (e.key === 'Escape') {
-      setEditingCell(null);
+      // Keep selection on the edited cell
+      const colIdx = sheet.columns.indexOf(editingCell.col);
+      if (colIdx !== -1) setSelectedCell({ row: editingCell.row, colIdx });
+      // Focus back to container
+      containerRef.current?.focus();
     }
   };
 
@@ -167,11 +265,14 @@ const DataGrid = forwardRef<DataGridHandle, DataGridProps>(({ sheet, zoomLevel, 
 
   return (
     <div 
-      className="flex-1 overflow-auto w-full h-full bg-white relative scroll-smooth"
+      className="flex-1 overflow-auto w-full h-full bg-white relative scroll-smooth outline-none"
       ref={containerRef}
-      onScroll={onScroll}
+      onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
+      tabIndex={0}
+      onKeyDown={handleKeyDown}
+      onClick={() => { /* Focus handling if needed */ }}
     >
-      <div style={{ height: totalHeight + 40 }} className="relative"> {/* +40 for header */}
+      <div style={{ height: totalHeight + 40 }} className="relative">
         <table 
           className="w-full text-right border-collapse table-fixed"
           style={{ fontSize: `${zoomLevel}%` }}
@@ -187,28 +288,34 @@ const DataGrid = forwardRef<DataGridHandle, DataGridProps>(({ sheet, zoomLevel, 
               {sheet.columns.map((col, idx) => (
                 <th
                   key={idx}
-                  className="border border-slate-300 p-2 font-semibold text-slate-700 overflow-hidden text-ellipsis whitespace-nowrap group hover:bg-slate-200 transition-colors cursor-pointer relative"
-                  style={{ width: getScaledColWidth(col) }} 
+                  className="border border-slate-300 p-2 font-semibold text-slate-700 overflow-hidden text-ellipsis whitespace-nowrap group hover:bg-slate-200 transition-colors relative select-none"
+                  style={{ width: (colWidths[col] || 150) * (zoomLevel / 100) }} 
                   title={col}
                 >
                   <div className="flex items-center justify-between gap-1 w-full overflow-hidden">
                     <span className="truncate">{col}</span>
                     <ArrowUpDown size={12} className="text-slate-400 opacity-0 group-hover:opacity-100 flex-shrink-0" />
                   </div>
+                  
+                  {/* Resizer Handle (Left side for RTL) */}
+                  <div
+                    className="absolute left-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-blue-400 z-10 opacity-0 group-hover:opacity-50"
+                    onMouseDown={(e) => startResizing(e, col)}
+                    onDoubleClick={() => performAutoSize(col)}
+                    title="גרור לשינוי רוחב, לחיצה כפולה להתאמה"
+                  />
                 </th>
               ))}
             </tr>
           </thead>
           
           <tbody>
-            {/* Top Spacer */}
             {topSpacerHeight > 0 && (
               <tr style={{ height: topSpacerHeight }}>
                 <td colSpan={sheet.columns.length + 1} />
               </tr>
             )}
 
-            {/* Rendered Rows */}
             {visibleRows.map(({ data: row, absoluteIndex }) => (
               <tr 
                 key={absoluteIndex} 
@@ -221,14 +328,27 @@ const DataGrid = forwardRef<DataGridHandle, DataGridProps>(({ sheet, zoomLevel, 
                 {sheet.columns.map((col, colIndex) => {
                   const val = row[col];
                   const displayVal = val !== undefined && val !== null ? String(val) : '';
-                  const diffClass = getCellClass(absoluteIndex, col, val);
+                  
+                  // Compare Logic
+                  let cellClass = 'border-l border-slate-300 px-2 py-0 truncate cursor-default ';
+                  if (compareSheet) {
+                      const compareRow = compareSheet.data[absoluteIndex];
+                      if (!compareRow) cellClass += 'bg-green-50 text-green-700 ';
+                      else if (String(val) !== String(compareRow[col] ?? '')) cellClass += 'bg-amber-50 text-amber-800 font-medium ';
+                  }
+
+                  // Selection Logic
+                  const isSelected = selectedCell?.row === absoluteIndex && selectedCell?.colIdx === colIndex;
+                  if (isSelected) cellClass += 'ring-2 ring-inset ring-blue-500 z-10 ';
+
                   const isEditing = editingCell?.row === absoluteIndex && editingCell?.col === col;
                   
                   return (
                     <td
                       key={`${absoluteIndex}-${colIndex}`}
-                      className={`border-l border-slate-300 px-2 py-0 truncate cursor-default ${diffClass} ${isEditing ? 'p-0' : ''}`}
+                      className={cellClass + (isEditing ? 'p-0' : '')}
                       title={displayVal}
+                      onClick={() => handleCellClick(absoluteIndex, colIndex)}
                       onDoubleClick={() => startEditing(absoluteIndex, col, val)}
                     >
                       {isEditing ? (
@@ -238,8 +358,12 @@ const DataGrid = forwardRef<DataGridHandle, DataGridProps>(({ sheet, zoomLevel, 
                           value={editValue}
                           onChange={(e) => setEditValue(e.target.value)}
                           onBlur={saveEdit}
-                          onKeyDown={handleKeyDown}
-                          className="w-full h-full bg-blue-100 px-1 outline-none text-blue-900 border-2 border-blue-400"
+                          onKeyDown={(e) => {
+                              if (e.key === 'Enter') saveEdit();
+                              if (e.key === 'Escape') setEditingCell(null);
+                              e.stopPropagation(); 
+                          }}
+                          className="w-full h-full bg-white px-1 outline-none text-blue-900"
                           style={{ height: '100%' }}
                         />
                       ) : (
@@ -251,7 +375,6 @@ const DataGrid = forwardRef<DataGridHandle, DataGridProps>(({ sheet, zoomLevel, 
               </tr>
             ))}
 
-            {/* Bottom Spacer */}
             {bottomSpacerHeight > 0 && (
               <tr style={{ height: bottomSpacerHeight }}>
                 <td colSpan={sheet.columns.length + 1} />

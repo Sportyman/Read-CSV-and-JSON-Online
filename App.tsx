@@ -1,6 +1,6 @@
 import React, { useState, useRef, useCallback } from 'react';
 import { Sheet } from './types';
-import { generateId, parseCSV, parseJSON, exportToCSV, downloadFile } from './utils/fileParser';
+import { generateId, parseCSV, parseJSON, exportToCSV, exportToExcel, downloadFile } from './utils/fileParser';
 import DataGrid, { DataGridHandle } from './components/DataGrid';
 import AnalysisSidebar from './components/AnalysisSidebar';
 import { 
@@ -14,10 +14,9 @@ import {
   ZoomOut,
   RotateCcw,
   GitCompare,
-  ArrowRightLeft,
   Maximize,
-  Save,
-  Download
+  Download,
+  ChevronDown
 } from 'lucide-react';
 
 const App: React.FC = () => {
@@ -25,6 +24,7 @@ const App: React.FC = () => {
   const [activeSheetId, setActiveSheetId] = useState<string | null>(null);
   const [compareSheetId, setCompareSheetId] = useState<string | null>(null);
   const [isCompareMode, setIsCompareMode] = useState(false);
+  const [showSaveMenu, setShowSaveMenu] = useState(false);
   
   const [zoomLevel, setZoomLevel] = useState(100);
   const [isDragging, setIsDragging] = useState(false);
@@ -37,7 +37,6 @@ const App: React.FC = () => {
   const dataGridRef = useRef<DataGridHandle>(null);
 
   const activeSheet = sheets.find(s => s.id === activeSheetId);
-  // Get the comparison sheet object if mode is active
   const comparisonSheet = isCompareMode && compareSheetId 
     ? sheets.find(s => s.id === compareSheetId) 
     : null;
@@ -104,7 +103,6 @@ const App: React.FC = () => {
     if (e.target.files && e.target.files.length > 0) {
       Array.from(e.target.files).forEach((file) => handleFileUpload(file as File));
     }
-    // Reset value to allow re-uploading same file if deleted
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
@@ -117,7 +115,6 @@ const App: React.FC = () => {
       }
       return newSheets;
     });
-    // Reset compare if closed
     if (compareSheetId === id) {
       setCompareSheetId(null);
       setIsCompareMode(false);
@@ -152,20 +149,24 @@ const App: React.FC = () => {
 
     setSheets(prevSheets => prevSheets.map(sheet => {
       if (sheet.id === activeSheetId) {
-        // Create a copy of the data array
         const newData = [...sheet.data];
-        // Create a copy of the specific row
         newData[rowIndex] = { ...newData[rowIndex], [colKey]: value };
-        
         return { ...sheet, data: newData };
       }
       return sheet;
     }));
   };
 
-  const handleSave = () => {
+  const handleSave = (format: 'original' | 'excel') => {
     if (!activeSheet) return;
+    setShowSaveMenu(false);
 
+    if (format === 'excel') {
+        exportToExcel(activeSheet.data, activeSheet.name);
+        return;
+    }
+
+    // Original Format
     let content = '';
     let filename = activeSheet.name;
     const type = activeSheet.type;
@@ -189,7 +190,7 @@ const App: React.FC = () => {
       onDragOver={onDragOver}
       onDrop={onDrop}
     >
-      {/* Drag Overlay - Added pointer-events-none to prevent flickering */}
+      {/* Drag Overlay */}
       {isDragging && (
         <div className="absolute inset-0 bg-blue-500/20 z-50 flex items-center justify-center backdrop-blur-sm border-4 border-blue-500 border-dashed m-4 rounded-xl pointer-events-none">
           <div className="text-blue-600 font-bold text-2xl flex flex-col items-center bg-white/50 p-6 rounded-2xl shadow-lg backdrop-blur-md">
@@ -199,16 +200,13 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {/* Top Bar / Navigation */}
+      {/* Top Bar */}
       <div className="h-12 bg-slate-800 flex items-end px-2 space-x-1 space-x-reverse overflow-x-auto select-none shadow-md z-20 shrink-0">
-        
-        {/* Logo / Brand */}
         <div className="flex items-center text-white px-4 h-full font-bold tracking-wider text-lg min-w-max">
           <FileSpreadsheet className="ml-2 text-green-400" />
           Read CSV & JSON Online
         </div>
 
-        {/* Tabs */}
         {sheets.map(sheet => (
           <div
             key={sheet.id}
@@ -232,11 +230,9 @@ const App: React.FC = () => {
           </div>
         ))}
 
-        {/* Add Button */}
         <button 
           onClick={createEmptySheet}
           className="h-8 w-8 mb-0.5 flex items-center justify-center rounded-lg text-slate-400 hover:bg-slate-700 hover:text-white transition-colors"
-          title="הוסף גליון חדש"
         >
           <Plus size={20} />
         </button>
@@ -245,7 +241,6 @@ const App: React.FC = () => {
       {/* Toolbar */}
       <div className="h-14 bg-white border-b border-slate-200 flex items-center px-4 justify-between shrink-0 overflow-x-auto">
         <div className="flex items-center gap-3">
-          {/* File Actions */}
           <div className="flex items-center gap-2 border-l border-slate-200 pl-3 ml-1">
             <input
               type="file"
@@ -257,25 +252,48 @@ const App: React.FC = () => {
             />
             <button 
               onClick={() => fileInputRef.current?.click()}
-              className="flex items-center gap-2 px-3 py-1.5 bg-blue-600 text-white rounded-md text-sm font-medium hover:bg-blue-700 transition-colors shadow-sm active:transform active:scale-95 whitespace-nowrap"
+              className="flex items-center gap-2 px-3 py-1.5 bg-blue-600 text-white rounded-md text-sm font-medium hover:bg-blue-700 transition-colors shadow-sm whitespace-nowrap"
             >
               <Upload size={16} />
               פתח קובץ
             </button>
             
             {activeSheet && (
-              <button 
-                onClick={handleSave}
-                className="flex items-center gap-2 px-3 py-1.5 bg-slate-100 text-slate-700 border border-slate-300 rounded-md text-sm font-medium hover:bg-slate-200 transition-colors shadow-sm whitespace-nowrap"
-                title="שמור והורד קובץ"
-              >
-                <Download size={16} />
-                שמור
-              </button>
+              <div className="relative">
+                <button 
+                  onClick={() => setShowSaveMenu(!showSaveMenu)}
+                  className="flex items-center gap-2 px-3 py-1.5 bg-slate-100 text-slate-700 border border-slate-300 rounded-md text-sm font-medium hover:bg-slate-200 transition-colors shadow-sm whitespace-nowrap"
+                >
+                  <Download size={16} />
+                  שמור / הורד
+                  <ChevronDown size={12} />
+                </button>
+                
+                {showSaveMenu && (
+                  <div className="absolute top-full right-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-xl z-50 w-48 overflow-hidden">
+                    <button 
+                       onClick={() => handleSave('original')} 
+                       className="w-full text-right px-4 py-2 hover:bg-blue-50 text-slate-700 text-sm flex items-center gap-2"
+                    >
+                      <FileJson size={14} />
+                      פורמט מקורי ({activeSheet.type.toUpperCase()})
+                    </button>
+                    <button 
+                       onClick={() => handleSave('excel')} 
+                       className="w-full text-right px-4 py-2 hover:bg-blue-50 text-slate-700 text-sm flex items-center gap-2"
+                    >
+                      <FileSpreadsheet size={14} />
+                      Excel (.xlsx)
+                    </button>
+                  </div>
+                )}
+                {showSaveMenu && (
+                    <div className="fixed inset-0 z-40" onClick={() => setShowSaveMenu(false)}></div>
+                )}
+              </div>
             )}
           </div>
 
-          {/* Zoom Controls */}
           {activeSheet && (
             <div className="flex items-center gap-1 bg-slate-100 rounded-lg p-1 border border-slate-200">
               <button onClick={() => adjustZoom(-10)} className="p-1 hover:bg-white rounded text-slate-600" title="הקטן תצוגה">
@@ -300,14 +318,12 @@ const App: React.FC = () => {
             </div>
           )}
           
-          {/* Compare Controls */}
           {activeSheet && sheets.length > 1 && (
              <div className="flex items-center gap-2 mr-2 bg-slate-50 p-1 px-2 rounded-lg border border-slate-200">
                <div className="flex items-center gap-1 text-slate-600">
                  <GitCompare size={16} />
                  <span className="text-sm font-medium hidden md:inline">השוואה:</span>
                </div>
-               
                <select 
                  className="text-sm bg-white border border-slate-300 rounded px-2 py-1 outline-none focus:border-blue-500 max-w-[150px]"
                  value={isCompareMode && compareSheetId ? compareSheetId : ''}
@@ -326,13 +342,6 @@ const App: React.FC = () => {
                    <option key={s.id} value={s.id}>{s.name}</option>
                  ))}
                </select>
-               
-               {isCompareMode && (
-                 <div className="flex gap-2 text-xs mr-2">
-                    <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-500"></span> חדש</span>
-                    <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-amber-500"></span> שונה</span>
-                 </div>
-               )}
              </div>
           )}
         </div>
@@ -387,7 +396,6 @@ const App: React.FC = () => {
            )}
         </div>
 
-        {/* AI Sidebar */}
         <AnalysisSidebar 
           isOpen={isSidebarOpen} 
           onClose={() => setSidebarOpen(false)} 

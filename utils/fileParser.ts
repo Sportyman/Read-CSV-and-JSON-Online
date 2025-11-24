@@ -1,4 +1,5 @@
 import { DataRow, Sheet } from '../types';
+import * as XLSX from 'xlsx';
 
 export const generateId = (): string => Math.random().toString(36).substring(2, 9);
 
@@ -103,6 +104,17 @@ export const exportToCSV = (data: DataRow[], columns: string[]): string => {
     }).join(',');
   });
   return [headerRow, ...rows].join('\n');
+};
+
+export const exportToExcel = (data: DataRow[], filename: string) => {
+  const ws = XLSX.utils.json_to_sheet(data);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Sheet1");
+  
+  // Correct extension if missing
+  if (!filename.endsWith('.xlsx')) filename += '.xlsx';
+  
+  XLSX.writeFile(wb, filename);
 };
 
 export const downloadFile = (content: string, filename: string, type: 'csv' | 'json') => {
