@@ -30,6 +30,9 @@ const App: React.FC = () => {
   const [isDragging, setIsDragging] = useState(false);
   const [isSidebarOpen, setSidebarOpen] = useState(false);
   
+  // Ref to track drag enter/leave events to prevent flickering
+  const dragCounter = useRef(0);
+  
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dataGridRef = useRef<DataGridHandle>(null);
 
@@ -61,21 +64,40 @@ const App: React.FC = () => {
     }
   };
 
-  const onDragOver = useCallback((e: React.DragEvent) => {
+  const onDragEnter = useCallback((e: React.DragEvent) => {
     e.preventDefault();
-    setIsDragging(true);
+    e.stopPropagation();
+    dragCounter.current += 1;
+    if (e.dataTransfer.items && e.dataTransfer.items.length > 0) {
+      setIsDragging(true);
+    }
   }, []);
 
   const onDragLeave = useCallback((e: React.DragEvent) => {
     e.preventDefault();
-    setIsDragging(false);
+    e.stopPropagation();
+    dragCounter.current -= 1;
+    if (dragCounter.current === 0) {
+      setIsDragging(false);
+    }
+  }, []);
+
+  const onDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    // Necessary to allow dropping
   }, []);
 
   const onDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
+    e.stopPropagation();
     setIsDragging(false);
-    const files = Array.from(e.dataTransfer.files);
-    files.forEach((file) => handleFileUpload(file as File));
+    dragCounter.current = 0;
+    
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      const files = Array.from(e.dataTransfer.files);
+      files.forEach((file) => handleFileUpload(file as File));
+    }
   }, []);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -162,14 +184,15 @@ const App: React.FC = () => {
   return (
     <div 
       className="flex flex-col h-screen w-full relative"
-      onDragOver={onDragOver}
+      onDragEnter={onDragEnter}
       onDragLeave={onDragLeave}
+      onDragOver={onDragOver}
       onDrop={onDrop}
     >
-      {/* Drag Overlay */}
+      {/* Drag Overlay - Added pointer-events-none to prevent flickering */}
       {isDragging && (
-        <div className="absolute inset-0 bg-blue-500/20 z-50 flex items-center justify-center backdrop-blur-sm border-4 border-blue-500 border-dashed m-4 rounded-xl">
-          <div className="text-blue-600 font-bold text-2xl flex flex-col items-center">
+        <div className="absolute inset-0 bg-blue-500/20 z-50 flex items-center justify-center backdrop-blur-sm border-4 border-blue-500 border-dashed m-4 rounded-xl pointer-events-none">
+          <div className="text-blue-600 font-bold text-2xl flex flex-col items-center bg-white/50 p-6 rounded-2xl shadow-lg backdrop-blur-md">
             <Upload size={48} className="mb-4" />
             <span>שחרר קבצים כאן לפתיחה</span>
           </div>
@@ -180,9 +203,9 @@ const App: React.FC = () => {
       <div className="h-12 bg-slate-800 flex items-end px-2 space-x-1 space-x-reverse overflow-x-auto select-none shadow-md z-20 shrink-0">
         
         {/* Logo / Brand */}
-        <div className="flex items-center text-white px-4 h-full font-bold tracking-wider text-lg">
+        <div className="flex items-center text-white px-4 h-full font-bold tracking-wider text-lg min-w-max">
           <FileSpreadsheet className="ml-2 text-green-400" />
-          DataView
+          Read CSV & JSON Online
         </div>
 
         {/* Tabs */}
