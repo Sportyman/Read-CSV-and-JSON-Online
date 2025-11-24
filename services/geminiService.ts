@@ -1,19 +1,12 @@
 import { GoogleGenAI } from "@google/genai";
 import { DataRow } from "../types";
 
-// Safety check for API Key
-const apiKey = process.env.API_KEY;
-
 export const analyzeData = async (
   data: DataRow[],
   columns: string[],
   userPrompt?: string
 ): Promise<string> => {
-  if (!apiKey) {
-    return "Error: API Key not configured in environment.";
-  }
-
-  const ai = new GoogleGenAI({ apiKey });
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
   // Truncate data to avoid excessive tokens, send first 25 rows
   const sampleData = data.slice(0, 25);
