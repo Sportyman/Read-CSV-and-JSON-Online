@@ -173,6 +173,15 @@ export const parseDOCX = async (buffer: ArrayBuffer): Promise<{ data: DataRow[],
   }
 };
 
+export const parseTXT = (content: string): { data: DataRow[], columns: string[] } => {
+  const lines = content.split(/\r?\n/).filter(line => line.trim().length > 0);
+  const data = lines.map((line, index) => ({
+    Line: index + 1,
+    Content: line
+  }));
+  return { data, columns: ['Line', 'Content'] };
+};
+
 export const exportToCSV = (data: DataRow[], columns: string[]): string => {
   const headerRow = columns.join(',');
   const rows = data.map(row => {

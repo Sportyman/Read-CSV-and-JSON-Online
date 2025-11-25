@@ -8,6 +8,7 @@ import {
   parseDOCX, 
   parseXML, 
   parseYAML,
+  parseTXT,
   exportToCSV, 
   exportToExcel, 
   downloadFile 
@@ -53,10 +54,13 @@ const App: React.FC = () => {
     : null;
 
   const handleFileUpload = async (file: File) => {
-    const name = file.name.toLowerCase();
+    // Clean filename: trim spaces and convert to lowercase for checking
+    const name = file.name.trim().toLowerCase();
     const id = generateId();
     let newSheet: Sheet | null = null;
-    let type: 'csv' | 'json' = 'csv'; // Default UI icon type
+    
+    // Debug log to help diagnose format issues
+    console.log(`Processing file: "${file.name}" -> cleaned: "${name}"`);
 
     try {
       if (name.endsWith('.csv')) {
@@ -70,11 +74,14 @@ const App: React.FC = () => {
       } else if (name.endsWith('.xlsx') || name.endsWith('.xls')) {
         const buffer = await file.arrayBuffer();
         const { data, columns } = parseXLSX(buffer);
-        newSheet = { id, name: file.name, data, columns, type: 'csv' }; // Treat as grid
+        newSheet = { id, name: file.name, data, columns, type: 'csv' }; 
       } else if (name.endsWith('.docx')) {
         const buffer = await file.arrayBuffer();
         const { data, columns } = await parseDOCX(buffer);
         newSheet = { id, name: file.name, data, columns, type: 'csv' };
+      } else if (name.endsWith('.doc')) {
+        alert("קובץ Word בפורמט ישן (.doc) אינו נתמך. אנא שמור את הקובץ כ-Word מודרני (.docx) ונסה שוב.");
+        return;
       } else if (name.endsWith('.xml')) {
         const text = await file.text();
         const { data, columns } = parseXML(text);
@@ -83,8 +90,12 @@ const App: React.FC = () => {
         const text = await file.text();
         const { data, columns } = parseYAML(text);
         newSheet = { id, name: file.name, data, columns, type: 'json' };
+      } else if (name.endsWith('.txt')) {
+        const text = await file.text();
+        const { data, columns } = parseTXT(text);
+        newSheet = { id, name: file.name, data, columns, type: 'csv' };
       } else {
-        alert("פורמט לא נתמך. אנא השתמש ב-CSV, JSON, Excel, Word, XML או YAML.");
+        alert(`הקובץ "${file.name}" אינו בפורמט נתמך.\nאנא השתמש בקבצים מסוג: CSV, JSON, Excel (xlsx), Word (docx), XML, YAML, או TXT.`);
         return;
       }
 
@@ -92,11 +103,14 @@ const App: React.FC = () => {
         setSheets(prev => [...prev, newSheet!]);
         setActiveSheetId(id);
       } else {
-        alert("לא נמצא מידע בקובץ או שהקריאה נכשלה.");
+        // If parsing succeeded but returned empty data (and parser didn't throw)
+        if (newSheet) {
+             alert(`הקובץ "${file.name}" נקרא בהצלחה אך לא נמצא בו מידע טבלאי להצגה.`);
+        }
       }
     } catch (e) {
       console.error("Error parsing file", e);
-      alert("שגיאה בקריאת הקובץ.");
+      alert(`שגיאה בקריאת הקובץ "${file.name}". אנא וודא שהקובץ תקין.`);
     }
   };
 
@@ -221,6 +235,7 @@ const App: React.FC = () => {
   // Helper to render icon
   const getIconForSheet = (name: string, type: 'csv' | 'json') => {
     if (name.endsWith('.docx')) return <FileText size={14} className="ml-2 opacity-70" />;
+    if (name.endsWith('.txt')) return <FileText size={14} className="ml-2 opacity-70" />;
     if (name.endsWith('.xml') || name.endsWith('.yaml') || name.endsWith('.yml')) return <FileCode size={14} className="ml-2 opacity-70" />;
     if (type === 'json') return <FileJson size={14} className="ml-2 opacity-70" />;
     return <FileSpreadsheet size={14} className="ml-2 opacity-70" />;
@@ -292,7 +307,7 @@ const App: React.FC = () => {
               onChange={handleInputChange}
               className="hidden"
               multiple
-              accept=".csv,.json,.xlsx,.xls,.docx,.xml,.yaml,.yml"
+              accept=".csv,.json,.xlsx,.xls,.docx,.xml,.yaml,.yml,.txt"
             />
             <button 
               onClick={() => fileInputRef.current?.click()}
