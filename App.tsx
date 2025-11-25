@@ -1,6 +1,17 @@
 import React, { useState, useRef, useCallback } from 'react';
 import { Sheet } from './types';
-import { generateId, parseCSV, parseJSON, exportToCSV, exportToExcel, downloadFile } from './utils/fileParser';
+import { 
+  generateId, 
+  parseCSV, 
+  parseJSON, 
+  parseXLSX, 
+  parseDOCX, 
+  parseXML, 
+  parseYAML,
+  exportToCSV, 
+  exportToExcel, 
+  downloadFile 
+} from './utils/fileParser';
 import DataGrid, { DataGridHandle } from './components/DataGrid';
 import AnalysisSidebar from './components/AnalysisSidebar';
 import { 
@@ -8,6 +19,8 @@ import {
   Upload, 
   FileSpreadsheet, 
   FileJson, 
+  FileText,
+  FileCode,
   X, 
   Sparkles,
   ZoomIn,
@@ -30,9 +43,7 @@ const App: React.FC = () => {
   const [isDragging, setIsDragging] = useState(false);
   const [isSidebarOpen, setSidebarOpen] = useState(false);
   
-  // Ref to track drag enter/leave events to prevent flickering
   const dragCounter = useRef(0);
-  
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dataGridRef = useRef<DataGridHandle>(null);
 
@@ -42,24 +53,50 @@ const App: React.FC = () => {
     : null;
 
   const handleFileUpload = async (file: File) => {
-    const text = await file.text();
-    let newSheet: Sheet | null = null;
-    const name = file.name;
+    const name = file.name.toLowerCase();
     const id = generateId();
+    let newSheet: Sheet | null = null;
+    let type: 'csv' | 'json' = 'csv'; // Default UI icon type
 
-    if (file.type === 'text/csv' || name.endsWith('.csv')) {
-      const { data, columns } = parseCSV(text);
-      newSheet = { id, name, data, columns, type: 'csv' };
-    } else if (file.type === 'application/json' || name.endsWith('.json')) {
-      const { data, columns } = parseJSON(text);
-      newSheet = { id, name, data, columns, type: 'json' };
-    }
+    try {
+      if (name.endsWith('.csv')) {
+        const text = await file.text();
+        const { data, columns } = parseCSV(text);
+        newSheet = { id, name: file.name, data, columns, type: 'csv' };
+      } else if (name.endsWith('.json')) {
+        const text = await file.text();
+        const { data, columns } = parseJSON(text);
+        newSheet = { id, name: file.name, data, columns, type: 'json' };
+      } else if (name.endsWith('.xlsx') || name.endsWith('.xls')) {
+        const buffer = await file.arrayBuffer();
+        const { data, columns } = parseXLSX(buffer);
+        newSheet = { id, name: file.name, data, columns, type: 'csv' }; // Treat as grid
+      } else if (name.endsWith('.docx')) {
+        const buffer = await file.arrayBuffer();
+        const { data, columns } = await parseDOCX(buffer);
+        newSheet = { id, name: file.name, data, columns, type: 'csv' };
+      } else if (name.endsWith('.xml')) {
+        const text = await file.text();
+        const { data, columns } = parseXML(text);
+        newSheet = { id, name: file.name, data, columns, type: 'json' };
+      } else if (name.endsWith('.yaml') || name.endsWith('.yml')) {
+        const text = await file.text();
+        const { data, columns } = parseYAML(text);
+        newSheet = { id, name: file.name, data, columns, type: 'json' };
+      } else {
+        alert("פורמט לא נתמך. אנא השתמש ב-CSV, JSON, Excel, Word, XML או YAML.");
+        return;
+      }
 
-    if (newSheet) {
-      setSheets(prev => [...prev, newSheet!]);
-      setActiveSheetId(id);
-    } else {
-      alert("Format not supported. Please use CSV or JSON.");
+      if (newSheet && newSheet.data.length > 0) {
+        setSheets(prev => [...prev, newSheet!]);
+        setActiveSheetId(id);
+      } else {
+        alert("לא נמצא מידע בקובץ או שהקריאה נכשלה.");
+      }
+    } catch (e) {
+      console.error("Error parsing file", e);
+      alert("שגיאה בקריאת הקובץ.");
     }
   };
 
@@ -84,7 +121,6 @@ const App: React.FC = () => {
   const onDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    // Necessary to allow dropping
   }, []);
 
   const onDrop = useCallback((e: React.DragEvent) => {
@@ -166,7 +202,7 @@ const App: React.FC = () => {
         return;
     }
 
-    // Original Format
+    // Original Format export logic
     let content = '';
     let filename = activeSheet.name;
     const type = activeSheet.type;
@@ -182,6 +218,14 @@ const App: React.FC = () => {
     downloadFile(content, filename, type);
   };
 
+  // Helper to render icon
+  const getIconForSheet = (name: string, type: 'csv' | 'json') => {
+    if (name.endsWith('.docx')) return <FileText size={14} className="ml-2 opacity-70" />;
+    if (name.endsWith('.xml') || name.endsWith('.yaml') || name.endsWith('.yml')) return <FileCode size={14} className="ml-2 opacity-70" />;
+    if (type === 'json') return <FileJson size={14} className="ml-2 opacity-70" />;
+    return <FileSpreadsheet size={14} className="ml-2 opacity-70" />;
+  };
+
   return (
     <div 
       className="flex flex-col h-screen w-full relative"
@@ -195,7 +239,7 @@ const App: React.FC = () => {
         <div className="absolute inset-0 bg-blue-500/20 z-50 flex items-center justify-center backdrop-blur-sm border-4 border-blue-500 border-dashed m-4 rounded-xl pointer-events-none">
           <div className="text-blue-600 font-bold text-2xl flex flex-col items-center bg-white/50 p-6 rounded-2xl shadow-lg backdrop-blur-md">
             <Upload size={48} className="mb-4" />
-            <span>שחרר קבצים כאן לפתיחה</span>
+            <span>שחרר קבצים כאן לפתיחה (CSV, JSON, Excel, Word, XML)</span>
           </div>
         </div>
       )}
@@ -219,7 +263,7 @@ const App: React.FC = () => {
               }
             `}
           >
-            {sheet.type === 'json' ? <FileJson size={14} className="ml-2 opacity-70" /> : <FileSpreadsheet size={14} className="ml-2 opacity-70" />}
+            {getIconForSheet(sheet.name, sheet.type)}
             <span className="truncate flex-1">{sheet.name}</span>
             <button 
               onClick={(e) => closeTab(e, sheet.id)}
@@ -248,7 +292,7 @@ const App: React.FC = () => {
               onChange={handleInputChange}
               className="hidden"
               multiple
-              accept=".csv, .json"
+              accept=".csv,.json,.xlsx,.xls,.docx,.xml,.yaml,.yml"
             />
             <button 
               onClick={() => fileInputRef.current?.click()}
@@ -276,7 +320,7 @@ const App: React.FC = () => {
                        className="w-full text-right px-4 py-2 hover:bg-blue-50 text-slate-700 text-sm flex items-center gap-2"
                     >
                       <FileJson size={14} />
-                      פורמט מקורי ({activeSheet.type.toUpperCase()})
+                      פורמט מקורי
                     </button>
                     <button 
                        onClick={() => handleSave('excel')} 
@@ -375,7 +419,7 @@ const App: React.FC = () => {
                   <Upload size={40} className="text-slate-300" />
                 </div>
                 <h1 className="text-2xl font-bold text-slate-600 mb-2">אין קבצים פתוחים</h1>
-                <p className="text-slate-500 mb-8">גרור קבצי CSV או JSON לכאן או לחץ על כפתור הפתיחה</p>
+                <p className="text-slate-500 mb-8">גרור קבצי CSV, JSON, Excel, Word או XML לכאן</p>
                 <button 
                   onClick={() => fileInputRef.current?.click()}
                   className="px-6 py-2 bg-white border border-slate-300 rounded-lg shadow-sm text-slate-700 hover:bg-slate-50 hover:border-blue-400 transition-all"
