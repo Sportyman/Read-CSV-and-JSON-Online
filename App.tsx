@@ -9,6 +9,7 @@ import {
   parseXML, 
   parseYAML,
   parseTXT,
+  parseLegacyDOC,
   exportToCSV, 
   exportToExcel, 
   downloadFile 
@@ -80,8 +81,16 @@ const App: React.FC = () => {
         const { data, columns } = await parseDOCX(buffer);
         newSheet = { id, name: file.name, data, columns, type: 'csv' };
       } else if (name.endsWith('.doc')) {
-        alert("קובץ Word בפורמט ישן (.doc) אינו נתמך. אנא שמור את הקובץ כ-Word מודרני (.docx) ונסה שוב.");
-        return;
+        try {
+           const { data, columns } = await parseLegacyDOC(file);
+           newSheet = { id, name: file.name, data, columns, type: 'csv' };
+        } catch (err: any) {
+           if (err.message === "BINARY_DOC_FORMAT") {
+             alert(`הקובץ "${file.name}" הוא קובץ Word בפורמט ישן (Binary .doc).\nדפדפנים לא יכולים לקרוא קובץ זה ישירות מטעמי אבטחה ומורכבות.\n\nפתרון: פתח את הקובץ ב-Word, בחר "שמור בשם", ושמור אותו כ-Word Document (.docx).`);
+             return;
+           }
+           throw err; // Re-throw other errors to be caught by outer catch
+        }
       } else if (name.endsWith('.xml')) {
         const text = await file.text();
         const { data, columns } = parseXML(text);
@@ -110,7 +119,7 @@ const App: React.FC = () => {
       }
     } catch (e) {
       console.error("Error parsing file", e);
-      alert(`שגיאה בקריאת הקובץ "${file.name}". אנא וודא שהקובץ תקין.`);
+      alert(`שגיאה בקריאת הקובץ "${file.name}". ייתכן שהקובץ פגום או מוצפן.`);
     }
   };
 
@@ -307,7 +316,7 @@ const App: React.FC = () => {
               onChange={handleInputChange}
               className="hidden"
               multiple
-              accept=".csv,.json,.xlsx,.xls,.docx,.xml,.yaml,.yml,.txt"
+              accept=".csv,.json,.xlsx,.xls,.docx,.xml,.yaml,.yml,.txt,.doc"
             />
             <button 
               onClick={() => fileInputRef.current?.click()}

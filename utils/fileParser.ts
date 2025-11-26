@@ -182,6 +182,53 @@ export const parseTXT = (content: string): { data: DataRow[], columns: string[] 
   return { data, columns: ['Line', 'Content'] };
 };
 
+// Handle "fake" doc files that are actually HTML
+export const parseHTML = (content: string): { data: DataRow[], columns: string[] } => {
+  try {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(content, 'text/html');
+    const table = doc.querySelector('table');
+
+    if (table) {
+      // If there is an HTML table, try to parse it
+      const wb = XLSX.utils.table_to_book(table);
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const rawData = XLSX.utils.sheet_to_json(ws);
+      return processDataArray(rawData);
+    } 
+
+    // Fallback: extract text from body
+    return parseTXT(doc.body.innerText || content);
+  } catch (e) {
+    console.error("Invalid HTML", e);
+    return parseTXT(content);
+  }
+};
+
+// Smart parser for legacy .doc
+export const parseLegacyDOC = async (file: File): Promise<{ data: DataRow[], columns: string[] }> => {
+  const buffer = await file.arrayBuffer();
+  const uint8 = new Uint8Array(buffer);
+  
+  // Check for OLE Binary File Signature (D0 CF 11 E0)
+  // This indicates a REAL binary Word 97-2003 file.
+  if (uint8.length > 4 && 
+      uint8[0] === 0xD0 && uint8[1] === 0xCF && 
+      uint8[2] === 0x11 && uint8[3] === 0xE0) {
+      throw new Error("BINARY_DOC_FORMAT");
+  }
+
+  // If we are here, it's likely a text/html file masquerading as .doc
+  const textDecoder = new TextDecoder('utf-8');
+  const content = textDecoder.decode(buffer);
+  
+  if (content.trim().toLowerCase().startsWith('<html') || content.includes('<table')) {
+    return parseHTML(content);
+  }
+
+  return parseTXT(content);
+};
+
 export const exportToCSV = (data: DataRow[], columns: string[]): string => {
   const headerRow = columns.join(',');
   const rows = data.map(row => {
